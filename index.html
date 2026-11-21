@@ -41,6 +41,10 @@ button,input,textarea{font:inherit}
 .item .row3{display:grid;grid-template-columns:70px 1fr;gap:0 10px}
 .item .rm{position:absolute;top:8px;right:8px;width:30px;height:30px;border-radius:50%;border:3px solid var(--ink);background:var(--yellow);font-weight:800;cursor:pointer;line-height:1}
 .item .d{padding-right:34px}
+.panel .chk{display:flex;align-items:center;margin:2px 0 0;font-size:12px;letter-spacing:0;text-transform:none;cursor:pointer}
+.panel .chk input{display:inline-block;width:18px;height:18px;margin:0 8px 0 0;accent-color:var(--red)}
+.item.pc .row3{grid-template-columns:1fr}
+.item.pc .qty{display:none}
 .acts{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
 .hint{margin:6px 0 0;font-size:12px;font-weight:600;color:var(--muted)}
 
@@ -108,7 +112,7 @@ td.empty{color:var(--muted);font-style:italic}
     <div id="items"></div>
     <div class="acts"><button class="btn btn-red btn-sm" type="button" id="add">+ Tambah item</button></div>
     <datalist id="svc"></datalist>
-    <p class="hint">Pilih nama layanan dari daftar ratecard, harga otomatis terisi batas bawah (bisa diubah).</p>
+    <p class="hint">Pilih nama layanan dari daftar ratecard, harga otomatis terisi batas bawah (bisa diubah). File mentah, lisensi komersial, dan deadline kilat otomatis dihitung sebagai persen dari total item lain.</p>
     <div class="row" style="margin-top:14px">
       <label>Diskon (Rp)<input type="number" min="0" step="1000" data-k="disc"></label>
       <label>DP (%)<input type="number" min="0" max="100" step="5" data-k="dp"></label>
@@ -133,7 +137,7 @@ const day = (d) => { const x = new Date(d + 'T00:00'); return isNaN(x) ? '-' : x
 const iso = (d) => new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
 
 /* ratecard presets: [layanan, harga batas bawah] */
-const SVC = [['Tipografi / Layout', 75000], ['Ilustrasi Simpel', 150000], ['Ilustrasi Karakter Full', 350000], ['Paket Set Merch', 700000], ['Chibi / Sticker Pack', 150000], ['Mockup Tambahan', 15000], ['Revisi tambahan', 25000], ['File mentah (AI/PSD)', 0], ['Lisensi komersial', 0], ['Biaya deadline kilat', 0]];
+const SVC = [['Tipografi / Layout', 75000], ['Ilustrasi Simpel', 150000], ['Ilustrasi Karakter Full', 350000], ['Paket Set Merch', 700000], ['Chibi / Sticker Pack', 150000], ['Mockup Tambahan', 15000], ['Revisi tambahan', 25000], ['File mentah (AI/PSD)', 20, 1], ['Lisensi komersial', 30, 1], ['Biaya deadline kilat', 25, 1]]; // [layanan, harga atau persen default, 1 = hitung % dari total item lain]
 $('#svc').innerHTML = SVC.map((s) => '<option value="' + esc(s[0]) + '">').join('');
 
 const fresh = () => {
@@ -151,10 +155,19 @@ try { const j = JSON.parse(localStorage.getItem('inv') || 'null'); if (j && Arra
 const save = () => { try { localStorage.setItem('inv', JSON.stringify(S)); } catch (e) {} };
 
 function renderItems() {
-  $('#items').innerHTML = S.items.map((it, i) => '<div class="item"><button class="rm" type="button" data-rm="' + i + '" aria-label="Hapus item ' + (i + 1) + '">&times;</button>'
+  $('#items').innerHTML = S.items.map((it, i) => '<div class="item' + (it.pc ? ' pc' : '') + '"><button class="rm" type="button" data-rm="' + i + '" aria-label="Hapus item ' + (i + 1) + '">&times;</button>'
     + '<label class="d">Deskripsi<input list="svc" data-i="' + i + '" data-f="d" value="' + esc(it.d) + '" placeholder="Ilustrasi, layout, dll"></label>'
-    + '<div class="row3"><label>Qty<input type="number" min="0" step="1" data-i="' + i + '" data-f="q" value="' + it.q + '"></label>'
-    + '<label>Harga satuan (Rp)<input type="number" min="0" step="1000" data-i="' + i + '" data-f="p" value="' + it.p + '"></label></div></div>').join('');
+    + '<div class="row3"><label class="qty">Qty<input type="number" min="0" step="1" data-i="' + i + '" data-f="q" value="' + it.q + '"></label>'
+    + '<label><span class="pl">' + (it.pc ? 'Persen dari total item lain (%)' : 'Harga satuan (Rp)') + '</span><input type="number" min="0" step="' + (it.pc ? 5 : 1000) + '" data-i="' + i + '" data-f="p" value="' + it.p + '"></label></div>'
+    + '<label class="chk"><input type="checkbox" data-i="' + i + '" data-f="pc"' + (it.pc ? ' checked' : '') + '>Hitung sebagai % dari total item lain</label></div>').join('');
+}
+// ubah satu kartu item ke mode % atau Rp tanpa render ulang (fokus tidak hilang)
+function applyPc(el, it) {
+  const box = el.closest('.item'), pin = box.querySelector('[data-f=p]');
+  box.classList.toggle('pc', !!it.pc);
+  box.querySelector('[data-f=pc]').checked = !!it.pc;
+  box.querySelector('.pl').textContent = it.pc ? 'Persen dari total item lain (%)' : 'Harga satuan (Rp)';
+  pin.step = it.pc ? 5 : 1000; pin.value = it.p;
 }
 function bindForm() {
   document.querySelectorAll('[data-k]').forEach((el) => { el.value = S[el.dataset.k]; });
@@ -162,7 +175,9 @@ function bindForm() {
 
 function render() {
   const rows = S.items.filter((it) => it.d || it.p);
-  const sub = rows.reduce((a, it) => a + it.q * it.p, 0);
+  const base = rows.reduce((a, it) => a + (it.pc ? 0 : it.q * it.p), 0); // dasar hitungan item persen
+  const amt = (it) => (it.pc ? Math.round(base * it.p / 100) : it.q * it.p);
+  const sub = rows.reduce((a, it) => a + amt(it), 0);
   const disc = Math.min(S.disc, sub), total = sub - disc;
   const dp = Math.round(total * Math.min(Math.max(S.dp, 0), 100) / 100);
   $('#sheet').innerHTML =
@@ -172,7 +187,7 @@ function render() {
     + '<div><span class="lbl">Dari</span><strong>' + esc(S.from) + '</strong><p>' + esc(S.fromContact) + '</p></div>'
     + '<div><span class="lbl">Ditagihkan ke</span><strong>' + esc(S.cname || '-') + '</strong><p>' + esc(S.ccontact) + '</p></div></div>'
     + '<table><thead><tr><th>Deskripsi</th><th class="n">Qty</th><th class="n">Harga</th><th class="n">Jumlah</th></tr></thead><tbody>'
-    + (rows.length ? rows.map((it) => '<tr><td>' + esc(it.d || '-') + '</td><td class="n">' + it.q + '</td><td class="n">' + rp(it.p) + '</td><td class="n">' + rp(it.q * it.p) + '</td></tr>').join('') : '<tr><td class="empty" colspan="4">Belum ada item</td></tr>')
+    + (rows.length ? rows.map((it) => '<tr><td>' + esc(it.d || '-') + '</td><td class="n">' + (it.pc ? '-' : it.q) + '</td><td class="n">' + (it.pc ? it.p + '%' : rp(it.p)) + '</td><td class="n">' + rp(amt(it)) + '</td></tr>').join('') : '<tr><td class="empty" colspan="4">Belum ada item</td></tr>')
     + '</tbody></table>'
     + '<div class="s-tot"><div><span>Subtotal</span><span>' + rp(sub) + '</span></div>'
     + (disc ? '<div><span>Diskon</span><span>- ' + rp(disc) + '</span></div>' : '')
@@ -192,8 +207,9 @@ $('#form').addEventListener('input', (e) => {
     if (f === 'd') {
       it.d = el.value;
       const s = SVC.find((x) => x[0] === el.value);
-      if (s && !it.p && s[1]) { it.p = s[1]; el.closest('.item').querySelector('[data-f=p]').value = s[1]; }
-    } else it[f] = Math.max(0, Number(el.value) || 0);
+      if (s && !it.p && s[1]) { it.p = s[1]; it.pc = !!s[2]; if (it.pc) it.q = 1; applyPc(el, it); }
+    } else if (f === 'pc') { it.pc = el.checked; if (it.pc) it.q = 1; applyPc(el, it); }
+    else it[f] = Math.max(0, Number(el.value) || 0);
   }
   render();
 });
